@@ -14,7 +14,7 @@ www_build=${www_root}/build/`date +%Y%m%d_%H%M%S`
 
 nowuser=$(whoami)
 publisher=gitman
-HUGO=/usr/local/sbin/hugo
+HUGO=/usr/sbin/hugo
 logfile=/var/log/git/receive-push.log
 
 echo "[PUBLISH BEGIN...]" |tee -a $logfile 
