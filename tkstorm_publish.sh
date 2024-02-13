@@ -1,85 +1,96 @@
-#!/bin/sh
+#!/bin/bash
 #
-# An example hook script to prepare a packed repository for use over
-# dumb transports.
-# 
+# hugo打包部署tkstorm.com 脚本
+#
 # Date: 2018-05-11
 #
 
 # 相关初始化
-build_root=/home/gitman/projects/tkstorm.com
-www_root=/data/www/tkstorm.com
-www_public=${www_root}/public
-www_build=${www_root}/build/`date +%Y%m%d_%H%M%S`
+projectGitPath="/home/gitman/projects/tkstorm.com"
+projectGitBranch="master"
 
-nowuser=$(whoami)
-publisher=gitman
-HUGO=/usr/sbin/hugo
-logfile=/var/log/git/receive-push.log
+deployer="gitman"
+buildProjectPath="/data/www/tkstorm.com"
+buildSavePath="${buildProjectPath}/build"
+websitePublicLink="${buildProjectPath}/public"
 
-echo "[PUBLISH BEGIN...]" |tee -a $logfile 
+# 本次构建
+buildPublicPath="$buildSavePath/$(date +%Y%m%d_%H%M%S)"
 
-# 准备发布
-unset GIT_DIR
-cd $build_root
+# 磁盘最多保存部署次数
+limitNum=10
 
-# 检测发布条件
-check_publish_user() {
-    echo "[PUBLISH USER CHECKING...]"
-    if [ $nowuser != $publisher ]; then
-      echo "PUBLISH ERROR: current user($nowuser) isn't match the publish user(${publisher}), please check again..."
-      exit 1
-    fi
-    
-    if [ !-d `dirname $www_build` ]; then
-      mkdir -p `dirname $www_build` || echo "PUBLISH ERROR: www_build(`dirname $www_build`) not exist, please check again... "
-      exit 1
-    fi
-}
+# 1. 准备发布
+echo "[deploy start... 🚀🚀🚀 ]"
 
-# 内容代码更新
-update_content() {
-    echo "[UPDATE THE GIT THINGS...]"
-    git checkout master | tee -a $logfile
-    git pull origin master |tee -a $logfile 
+# 检测发布用户
+currentUser=$(whoami)
+echo "[deploy user account checking... ]"
+if [ "$currentUser" != $deployer ]; then
+	echo "[Error]: current user[$currentUser] isn't match the deploy user: ${deployer}, reset an try again..."
+	exit 1
+fi
 
-    echo "[UPDATE THE SUBMODULE...]"
-    git submodule update --remote
-}
+# 检测构建目录(包含日期)
+echo "[deploy user account checking... ]"
+if [ ! -d "$(dirname ${buildPublicPath})" ]; then
+	mkdir -p "$(dirname ${buildPublicPath})" || echo "[Error]: buildPublicPath($(dirname $buildPublicPath)) not exist, please check again... "
+	exit 1
+fi
 
-# 更新hugo的config配置信息
-update_config() {
-    cp -f config.prod.yaml config.yaml
-}
+# 2. git仓库代码更新
+echo "[✅ git deploy check ok. now begin update the git repository... 🚀🚀🚀 ]"
 
-# hugo进行重新构建
-build_project() {
-    # hugo构建
-    echo "[HUGO BUILDING PROJECT...]"
-    $HUGO -v --cleanDestinationDir|tee -a $logfile 
+# a) git 更新tkstorm.com项目
+cd ${projectGitPath} || exit
+git checkout $projectGitBranch
+#git reset --hard
 
-    # 同步文档
-    [ ! -d "$www_build" ] && mkdir -p $www_build 
-    rsync -az --exclude-from=.rsync-filter public/ $www_build
-    
-    # 重做软链
-    if [ -L "$www_public" ]; then
-      unlink $www_public && ln -s $www_build $www_public || exit 9
-    else 
-      ln -s $www_build $www_public || exit 9
-    fi
+git pull origin $projectGitBranch || exit 1
+echo "[✅ git pull tkstorm.com repository done. ]"
 
-    echo "[PUBLISH COMPLETE]...."
-}
+# b) git 更新submodule内容
+echo "[update the submodule repository... ]"
+git submodule update --remote|| exit 1
+echo "[✅ git submodule update done. ]"
 
-# 发布用户检测
-check_publish_user
+# 3. hugo构建
+echo "[hugo build project... 🚀🚀🚀]"
+hugo -v --minify --cleanDestinationDir || exit 1
+echo "[✅ hugo build done. ]"
 
-# 内容更新
-update_content
+# 4. 将构建内容同步到指定目录
+echo "[rsync website public files to build path ... 🚀🚀🚀]"
+[ ! -d "$buildPublicPath" ] && mkdir -p "$buildPublicPath"
+rsync -az --exclude-from=.rsync-filter public/ $buildPublicPath || exit 1
+echo "[✅ rsync public to $buildPublicPath ok. ]"
 
-# 配置替换
-update_config
+# 5. 重做public软链
+echo "[unlink and relink the website public dir ... 🚀🚀🚀]"
+if [ -L "$websitePublicLink" ]; then
+	unlink $websitePublicLink && ln -s "$buildPublicPath" $websitePublicLink || exit 9
+else
+	ln -s $buildPublicPath $websitePublicLink || exit 9
+fi
+echo "[✅ relink website to public path ok. ]"
 
-# hugo构建
-build_project
+# 6. 部署完成，定期清理内容，最多保存10个
+echo "[clean build path, keep only ($limitNum) build records ... 🚀🚀🚀]"
+cleanPath=($(ls -dt $buildSavePath/* | sort))
+curNum=${#cleanPath[@]}
+if ((curNum >= 2*limitNum)); then
+  for i in $(seq 1 $limitNum); do
+		toDeletePath="${cleanPath[$i]}"
+
+		# 需要做下检查，避免误删了其他系统文件
+		if [[ $toDeletePath == *${buildSavePath}* ]]; then
+			echo "try delete index dir:$i , path:${cleanPath[$i]}..."
+			rm -rf $toDeletePath || exit 1
+		fi
+	done
+	echo "[✅ clean website build path ok. ]"
+else
+	echo "[needn't clean records curNum=($curNum), limitNum=($limitNum)]"
+fi
+
+echo "[👏👏👏deploy success]...."
